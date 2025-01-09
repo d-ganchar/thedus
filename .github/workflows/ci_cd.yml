@@ -1,0 +1,107 @@
+name: Push commit
+on:
+  release:
+    types: [ created ]
+  push:
+    branches:
+      - '*'
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      UV_PYTHON: 3.9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: 3.9
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Check formatting with Ruff
+        run: ruff check
+
+      - name: Build
+        run: |
+          if [[ '${{ github.event_name }}' = 'release' ]]; then
+             sed -i -e "s/0.dev.0/$GITHUB_REF_NAME/g" pyproject.toml
+          fi
+          uv build
+          mkdir thedus_build
+          mv ./dist ./thedus_build
+      - name: Upload thedus package
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: thedus_build
+          retention-days: 90
+
+  tests:
+    runs-on: ubuntu-22.04
+    permissions: write-all
+    needs: [ build ]
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:latest
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ "3.9", "3.10", "3.11", "3.12" ]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Download thedus package
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Install thedus
+        run: uv pip install dist/$(ls ./dist/ | grep ".tar.gz")
+
+      - name: Run tests
+        run: |
+          mkdir -p ./tests/migrations
+          pytest tests
+
+  publish_to_PyPi:
+    runs-on: ubuntu-22.04
+    needs: [ tests ]
+    if: github.event_name == 'release' && github.event.action == 'created'
+    environment:
+      name: pypi
+      url: https://pypi.org/p/thedus
+    permissions:
+      id-token: write
+    steps:
+      - name: Download thedus package
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
