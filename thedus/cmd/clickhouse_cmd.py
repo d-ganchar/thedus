@@ -211,9 +211,15 @@ class StateCmd(AbstractCmd):
             )
 
         print_file = False
+        last_revision = applied[-1].revision
         for migration_path in self._migrations:
             migration_file = _parse_migration_path(migration_path)
-            if migration_file.revision == applied[-1].revision:
+            if last_revision == '':
+                table.add_row('', '', migration_file.revision, '', style='bright_black')
+                print_file = True
+                continue
+
+            if migration_file.revision == last_revision:
                 print_file = True
                 continue
 
