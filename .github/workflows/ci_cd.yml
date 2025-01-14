@@ -62,8 +62,6 @@ jobs:
       fail-fast: false
       matrix:
         python-version: [ "3.9", "3.10", "3.11", "3.12" ]
-    env:
-      UV_PYTHON: ${{ matrix.python-version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -71,21 +69,22 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Download thedus package
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Download thedus dist
         uses: actions/download-artifact@v4
         with:
           name: dist
 
-      - name: Install dependencies
-        run: uv sync --dev
-
-      - name: Install thedus
+      - name: Install thedus from dist
         run: uv pip install dist/$(ls ./dist/ | grep ".tar.gz")
 
-      - name: Run tests
+      - name: Test with python ${{ matrix.python-version }}
         run: |
           mkdir -p ./tests/migrations
           pytest tests
+  
 
   publish_to_PyPi:
     runs-on: ubuntu-22.04
