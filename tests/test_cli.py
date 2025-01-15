@@ -111,13 +111,12 @@ class Migration(BaseMigration):
             self.clickhouse.execute("""
                 SELECT command, revision, environment, is_skipped
                   FROM thedus_migration_log
-                 ORDER BY created_at
+                 ORDER BY version
             """),
         )
 
-    def check_thedus_output(self, output: bytes, expected: List[str]):
-        output = output.decode().split('\n')
-        output.pop()
+    def check_thedus_output(self, output: str, expected: List[str]):
+        output = output.split('\n')
         output_log = [' '.join(line.split(' ')[3:]) for line in output]
         self.assertEqual(output_log, expected)
 
@@ -187,12 +186,7 @@ class Migration(BaseMigration):
         expected_thedus_logs: list,
     ):
         os.environ['THEDUS_ENV'] = thedus_env
-        result = subprocess.check_output(
-            ['thedus', 'upgrade'],
-            env=os.environ,
-            stderr=subprocess.PIPE,
-        )
-
+        result = subprocess.getoutput('thedus upgrade')
         self.check_thedus_output(result, expected_output)
         expected = [
             self.clickhouse.execute(f'SELECT count() FROM {t}')
@@ -203,12 +197,7 @@ class Migration(BaseMigration):
         self.check_thedus_migration_log(expected_thedus_logs)
 
         # 1 downgrade
-        result = subprocess.check_output(
-            ['thedus', 'downgrade'],
-            env=os.environ,
-            stderr=subprocess.PIPE,
-        )
-
+        result = subprocess.getoutput('thedus downgrade')
         self.check_thedus_output(result, ['rollback 20250101000003_create_tbl_logs', 'done'])
         self.assertEqual(
             [],
@@ -217,28 +206,14 @@ class Migration(BaseMigration):
             ))
 
     def test_upgrade_to_revision(self):
-        result = subprocess.check_output(
-            ['thedus', 'upgrade', '20250101000000_create_tbl_metrics'],
-            env=os.environ,
-            stderr=subprocess.PIPE,
-        )
-
+        result = subprocess.getoutput('thedus upgrade 20250101000000_create_tbl_metrics')
         self.check_thedus_output(result, ['upgrade to 20250101000000_create_tbl_metrics', 'done'])
         self.check_thedus_migration_log([
             ('upgrade 20250101000000_create_tbl_metrics', '20250101000000_create_tbl_metrics', 'dev', 0),
         ])
 
-        self.assertEqual(
-            [(0,)],
-            self.clickhouse.execute('SELECT count() FROM metrics')
-        )
-
-        result = subprocess.check_output(
-            ['thedus', 'upgrade', '20250101000002_create_tbl_events'],
-            env=os.environ,
-            stderr=subprocess.PIPE,
-        )
-
+        self.assertEqual([(0,)], self.clickhouse.execute('SELECT count() FROM metrics'))
+        result = subprocess.getoutput('thedus upgrade 20250101000002_create_tbl_events')
         self.check_thedus_output(
             result,
             [
@@ -253,18 +228,11 @@ class Migration(BaseMigration):
             ('upgrade 20250101000002_create_tbl_events', '20250101000002_create_tbl_events', 'dev', 0),
         ])
 
-        self.assertEqual(
-            [(0,)],
-            self.clickhouse.execute('SELECT count() FROM events')
-        )
+        self.assertEqual([(0,)], self.clickhouse.execute('SELECT count() FROM events'))
 
     def test_downgrade_to_revision(self):
-        subprocess.check_output(['thedus', 'upgrade'], env=os.environ)
-        result = subprocess.check_output(
-            ['thedus', 'downgrade', '20250101000001_insert_into_metrics'],
-            env=os.environ,
-            stderr=subprocess.PIPE,
-        )
+        subprocess.getoutput('thedus upgrade')
+        result = subprocess.getoutput('thedus downgrade 20250101000001_insert_into_metrics')
 
         self.check_thedus_output(
             result,
@@ -293,17 +261,7 @@ class Migration(BaseMigration):
             ('downgrade 20250101000001_insert_into_metrics', '20250101000001_insert_into_metrics', 'dev', 0),
             ('downgrade 20250101000001_insert_into_metrics', '20250101000000_create_tbl_metrics', 'dev', 1)])
 
-        result = subprocess.check_output(
-            ['thedus', 'downgrade'],
-            env=os.environ,
-            stderr=subprocess.PIPE,
-        )
-
+        result = subprocess.getoutput('thedus downgrade')
         self.check_thedus_output(result, ['rollback 20250101000000_create_tbl_metrics', 'done'])
-        result = subprocess.check_output(
-            ['thedus', 'downgrade'],
-            env=os.environ,
-            stderr=subprocess.PIPE,
-        )
-
+        result = subprocess.getoutput('thedus downgrade')
         self.check_thedus_output(result, ['done'])

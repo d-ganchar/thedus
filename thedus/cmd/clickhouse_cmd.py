@@ -3,7 +3,7 @@ import dataclasses
 import sys
 import logging
 from datetime import datetime
-from typing import List
+from typing import List, Union
 
 from ripley import ClickhouseProtocol
 from rich.console import Console
@@ -81,7 +81,7 @@ class _AbstractChangeDbStateCmd(AbstractCmd):
         sys.path.append(thedus_dir)
 
         self._clickhouse = clickhouse
-        self._migration_files: List[str] | None = None
+        self._migration_files: Union[List[str], None] = None
         self._to_revision = to_revision
         self._thedus_env = thedus_env
 
