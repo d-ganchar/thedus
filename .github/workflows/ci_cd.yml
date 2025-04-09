@@ -11,6 +11,7 @@ permissions:
   pages: write
   id-token: write
 
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -47,11 +48,16 @@ jobs:
     runs-on: ubuntu-22.04
     permissions: write-all
     needs: [ build ]
+
     services:
       clickhouse:
-        image: clickhouse/clickhouse-server:latest
+        image: clickhouse/clickhouse-server:23.4
+        env:
+          CLICKHOUSE_USER: thedus_tests
+          CLICKHOUSE_PASSWORD: thedus_tests
         ports:
           - 9000:9000
+          - 8123:8123
         options: >-
           --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
           --health-interval 10s

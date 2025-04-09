@@ -1,5 +1,6 @@
-import re
+import os
 import logging
+from datetime import timezone, datetime
 from logging.config import dictConfig
 
 import typer
@@ -93,13 +94,17 @@ def state(
 
 @app.command(help='Generates a new migration file. example: thedus create-migration create_metrics')
 def create_migration(name: str):
-    pattern = '[a-z_]{6,30}'
-    if re.fullmatch(pattern, name):
-        migration_path = Migrations.create_migration(name)
+    now = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+    file_name = f'{now}_{name}.py'
+    migration_path = os.path.join(Env.get_thedus_dir(), file_name)
+
+    if Migrations.is_valid_migration_file(file_name):
+        migration_path = Migrations.create_migration(migration_path)
         logging.info(f'{migration_path} created')
         return
 
-    logging.info(f'Invalid migration name "{name}". The name must match reg exp {pattern}')
+    logging.error(f'Invalid migration name "{name}". The name must match reg exp '
+                  f'{Migrations.MIGRATION_FILENAME_PATTERN}')
     exit(1)
 
 
