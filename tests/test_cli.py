@@ -10,12 +10,16 @@ from parameterized import parameterized
 from clickhouse_driver import Client
 
 
+os.environ['CLICKHOUSE_USER'] = 'thedus_tests'
+os.environ['CLICKHOUSE_PASSWORD'] = 'thedus_tests'
+
+
 def init_clickhouse(database: str = 'default') -> Client:
     return Client(
         host='localhost',
         port=9000,
-        user='default',
-        password='',
+        user=os.environ['CLICKHOUSE_USER'],
+        password=os.environ['CLICKHOUSE_PASSWORD'],
         database=database,
     )
 
@@ -84,7 +88,7 @@ class BaseCliTest(unittest.TestCase):
                 '',
             ),
         ):
-            file_path = os.path.join(self.thedus_dir, f'2025010100000{file_name}.py')
+            file_path = os.path.join(self.thedus_dir, f'20250101000000_{file_name}.py')
             get_env_to_skip = f"""
     @classmethod
     def get_env_to_skip(cls) -> list:
@@ -150,32 +154,32 @@ class Migration(BaseMigration):
         [
             'dev',
             [
-                'upgrade to 20250101000000_create_tbl_metrics',
-                'SKIP 20250101000001_insert_into_metrics',
-                'upgrade to 20250101000002_create_tbl_events',
-                'upgrade to 20250101000003_create_tbl_logs',
+                'upgrade to 20250101000000_0_create_tbl_metrics',
+                'SKIP 20250101000000_1_insert_into_metrics',
+                'upgrade to 20250101000000_2_create_tbl_events',
+                'upgrade to 20250101000000_3_create_tbl_logs',
                 'done',
             ],
             [[(0,)], [(0,)], [(0,)]],
-            [('upgrade', '20250101000000_create_tbl_metrics', 'dev', 0),
-             ('upgrade', '20250101000001_insert_into_metrics', 'dev', 1),
-             ('upgrade', '20250101000002_create_tbl_events', 'dev', 0),
-             ('upgrade', '20250101000003_create_tbl_logs', 'dev', 0)],
+            [('upgrade', '20250101000000_0_create_tbl_metrics', 'dev', 0),
+             ('upgrade', '20250101000000_1_insert_into_metrics', 'dev', 1),
+             ('upgrade', '20250101000000_2_create_tbl_events', 'dev', 0),
+             ('upgrade', '20250101000000_3_create_tbl_logs', 'dev', 0)],
         ],
         [
             'prod',
             [
-                'upgrade to 20250101000000_create_tbl_metrics',
-                'upgrade to 20250101000001_insert_into_metrics',
-                'upgrade to 20250101000002_create_tbl_events',
-                'upgrade to 20250101000003_create_tbl_logs',
+                'upgrade to 20250101000000_0_create_tbl_metrics',
+                'upgrade to 20250101000000_1_insert_into_metrics',
+                'upgrade to 20250101000000_2_create_tbl_events',
+                'upgrade to 20250101000000_3_create_tbl_logs',
                 'done',
             ],
             [[(1,)], [(0,)], [(0,)]],
-            [('upgrade', '20250101000000_create_tbl_metrics', 'prod', 0),
-             ('upgrade', '20250101000001_insert_into_metrics', 'prod', 0),
-             ('upgrade', '20250101000002_create_tbl_events', 'prod', 0),
-             ('upgrade', '20250101000003_create_tbl_logs', 'prod', 0)],
+            [('upgrade', '20250101000000_0_create_tbl_metrics', 'prod', 0),
+             ('upgrade', '20250101000000_1_insert_into_metrics', 'prod', 0),
+             ('upgrade', '20250101000000_2_create_tbl_events', 'prod', 0),
+             ('upgrade', '20250101000000_3_create_tbl_logs', 'prod', 0)],
         ],
     ])
     def test_upgrade_downgrade(
@@ -198,7 +202,7 @@ class Migration(BaseMigration):
 
         # 1 downgrade
         result = subprocess.getoutput('thedus downgrade')
-        self.check_thedus_output(result, ['rollback 20250101000003_create_tbl_logs', 'done'])
+        self.check_thedus_output(result, ['rollback 20250101000000_3_create_tbl_logs', 'done'])
         self.assertEqual(
             [],
             self.clickhouse.execute(
@@ -206,40 +210,40 @@ class Migration(BaseMigration):
             ))
 
     def test_upgrade_to_revision(self):
-        result = subprocess.getoutput('thedus upgrade 20250101000000_create_tbl_metrics')
-        self.check_thedus_output(result, ['upgrade to 20250101000000_create_tbl_metrics', 'done'])
+        result = subprocess.getoutput('thedus upgrade 20250101000000_0_create_tbl_metrics')
+        self.check_thedus_output(result, ['upgrade to 20250101000000_0_create_tbl_metrics', 'done'])
         self.check_thedus_migration_log([
-            ('upgrade 20250101000000_create_tbl_metrics', '20250101000000_create_tbl_metrics', 'dev', 0),
+            ('upgrade 20250101000000_0_create_tbl_metrics', '20250101000000_0_create_tbl_metrics', 'dev', 0),
         ])
 
         self.assertEqual([(0,)], self.clickhouse.execute('SELECT count() FROM metrics'))
-        result = subprocess.getoutput('thedus upgrade 20250101000002_create_tbl_events')
+        result = subprocess.getoutput('thedus upgrade 20250101000000_2_create_tbl_events')
         self.check_thedus_output(
             result,
             [
-                'SKIP 20250101000001_insert_into_metrics',
-                'upgrade to 20250101000002_create_tbl_events',
+                'SKIP 20250101000000_1_insert_into_metrics',
+                'upgrade to 20250101000000_2_create_tbl_events',
                 'done',
             ])
 
         self.check_thedus_migration_log([
-            ('upgrade 20250101000000_create_tbl_metrics', '20250101000000_create_tbl_metrics', 'dev', 0),
-            ('upgrade 20250101000002_create_tbl_events', '20250101000001_insert_into_metrics', 'dev', 1),
-            ('upgrade 20250101000002_create_tbl_events', '20250101000002_create_tbl_events', 'dev', 0),
+            ('upgrade 20250101000000_0_create_tbl_metrics', '20250101000000_0_create_tbl_metrics', 'dev', 0),
+            ('upgrade 20250101000000_2_create_tbl_events', '20250101000000_1_insert_into_metrics', 'dev', 1),
+            ('upgrade 20250101000000_2_create_tbl_events', '20250101000000_2_create_tbl_events', 'dev', 0),
         ])
 
         self.assertEqual([(0,)], self.clickhouse.execute('SELECT count() FROM events'))
 
     def test_downgrade_to_revision(self):
         subprocess.getoutput('thedus upgrade')
-        result = subprocess.getoutput('thedus downgrade 20250101000001_insert_into_metrics')
+        result = subprocess.getoutput('thedus downgrade 20250101000000_1_insert_into_metrics')
 
         self.check_thedus_output(
             result,
             [
-                'rollback 20250101000003_create_tbl_logs',
-                'rollback 20250101000002_create_tbl_events',
-                'SKIP 20250101000001_insert_into_metrics',
+                'rollback 20250101000000_3_create_tbl_logs',
+                'rollback 20250101000000_2_create_tbl_events',
+                'SKIP 20250101000000_1_insert_into_metrics',
                 'done',
             ]
         )
@@ -253,15 +257,15 @@ class Migration(BaseMigration):
         )
 
         self.check_thedus_migration_log([
-            ('upgrade', '20250101000000_create_tbl_metrics', 'dev', 0),
-            ('upgrade', '20250101000001_insert_into_metrics', 'dev', 1),
-            ('upgrade', '20250101000002_create_tbl_events', 'dev', 0),
-            ('upgrade', '20250101000003_create_tbl_logs', 'dev', 0),
-            ('downgrade 20250101000001_insert_into_metrics', '20250101000002_create_tbl_events', 'dev', 0),
-            ('downgrade 20250101000001_insert_into_metrics', '20250101000001_insert_into_metrics', 'dev', 0),
-            ('downgrade 20250101000001_insert_into_metrics', '20250101000000_create_tbl_metrics', 'dev', 1)])
+            ('upgrade', '20250101000000_0_create_tbl_metrics', 'dev', 0),
+            ('upgrade', '20250101000000_1_insert_into_metrics', 'dev', 1),
+            ('upgrade', '20250101000000_2_create_tbl_events', 'dev', 0),
+            ('upgrade', '20250101000000_3_create_tbl_logs', 'dev', 0),
+            ('downgrade 20250101000000_1_insert_into_metrics', '20250101000000_2_create_tbl_events', 'dev', 0),
+            ('downgrade 20250101000000_1_insert_into_metrics', '20250101000000_1_insert_into_metrics', 'dev', 0),
+            ('downgrade 20250101000000_1_insert_into_metrics', '20250101000000_0_create_tbl_metrics', 'dev', 1)])
 
         result = subprocess.getoutput('thedus downgrade')
-        self.check_thedus_output(result, ['rollback 20250101000000_create_tbl_metrics', 'done'])
+        self.check_thedus_output(result, ['rollback 20250101000000_0_create_tbl_metrics', 'done'])
         result = subprocess.getoutput('thedus downgrade')
         self.check_thedus_output(result, ['done'])

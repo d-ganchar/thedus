@@ -14,3 +14,6 @@ services:
       interval: 2s
       timeout: 2s
       retries: 16
+    environment:
+      CLICKHOUSE_USER: thedus_tests
+      CLICKHOUSE_PASSWORD: thedus_tests
