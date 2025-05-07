@@ -11,7 +11,6 @@ permissions:
   pages: write
   id-token: write
 
-
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -48,22 +47,6 @@ jobs:
     runs-on: ubuntu-22.04
     permissions: write-all
     needs: [ build ]
-
-    services:
-      clickhouse:
-        image: clickhouse/clickhouse-server:23.4
-        env:
-          CLICKHOUSE_USER: thedus_tests
-          CLICKHOUSE_PASSWORD: thedus_tests
-        ports:
-          - 9000:9000
-          - 8123:8123
-        options: >-
-          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     strategy:
       fail-fast: false
       matrix:
@@ -77,6 +60,17 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --dev
+
+      - uses: hoverkraft-tech/compose-action@v2.0.2
+        with:
+          services: |
+            clickhouse
+          up-flags: "-d"
+
+      - uses: iFaxity/wait-on-action@v1.2.1
+        with:
+          resource: http://localhost:8123
+          timeout: 30000
 
       - name: Download thedus dist
         uses: actions/download-artifact@v4

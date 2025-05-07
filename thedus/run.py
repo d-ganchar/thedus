@@ -1,6 +1,7 @@
-import os
+import codecs
 import logging
-from datetime import timezone, datetime
+import os
+import re
 from logging.config import dictConfig
 
 import typer
@@ -9,10 +10,9 @@ from clickhouse_driver.errors import Error
 from ripley import ClickhouseProtocol, from_clickhouse
 from typing_extensions import Annotated
 
+from .cmd.clickhouse_cmd import StateCmd, UpgradeCmd, DowngradeCmd
 from .env_manager import EnvManager as Env
 from .migration_file_manager import MigrationFileManager as Migrations
-from .cmd.clickhouse_cmd import StateCmd, UpgradeCmd, DowngradeCmd
-
 
 dictConfig({
     'version': 1,
@@ -40,7 +40,7 @@ dictConfig({
 })
 
 
-def init_clickhouse() -> ClickhouseProtocol:
+def init_clickhouse(create_migration_log: bool=True) -> ClickhouseProtocol:
     host = Env.get_clickhouse_host()
     db = Env.get_clickhouse_db()
 
@@ -53,17 +53,19 @@ def init_clickhouse() -> ClickhouseProtocol:
             database=db,
         ))
 
-        clickhouse.exec("""CREATE TABLE IF NOT EXISTS thedus_migration_log
-        (
-            command String,
-            revision String,
-            environment String,
-            version UInt64,
-            is_skipped UInt8 default 0,
-            created_at Datetime default now()
-        )
-        ENGINE = Log
-        """)
+        if create_migration_log:
+            clickhouse.exec("""
+            CREATE TABLE IF NOT EXISTS thedus_migration_log
+            (
+                command String,
+                revision String,
+                environment String,
+                version UInt64,
+                is_skipped UInt8 default 0,
+                created_at Datetime default now()
+            )
+            ENGINE = Log
+            """)
 
         return clickhouse
     except (Error, ConnectionRefusedError) as error:
@@ -94,17 +96,13 @@ def state(
 
 @app.command(help='Generates a new migration file. example: thedus create-migration create_metrics')
 def create_migration(name: str):
-    now = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
-    file_name = f'{now}_{name}.py'
-    migration_path = os.path.join(Env.get_thedus_dir(), file_name)
-
-    if Migrations.is_valid_migration_file(file_name):
-        migration_path = Migrations.create_migration(migration_path)
+    pattern = '[a-z_]{6,30}'
+    if re.fullmatch(pattern, name):
+        migration_path = Migrations.create_migration(name)
         logging.info(f'{migration_path} created')
         return
 
-    logging.error(f'Invalid migration name "{name}". The name must match reg exp '
-                  f'{Migrations.MIGRATION_FILENAME_PATTERN}')
+    logging.info(f'Invalid migration name "{name}". The name must match reg exp {pattern}')
     exit(1)
 
 
@@ -166,6 +164,44 @@ def downgrade(
 
     downgrade_cmd.run()
     logging.info('done')
+
+
+@app.command(help='Saves a database structure to a file, system.tables.create_table_query is used to generate the DDL')
+def save_db_structure(
+    db_name: Annotated[
+        str,
+        typer.Argument(
+            metavar='TEXT',
+            help='Database name'
+        ),
+    ] = Env.get_clickhouse_db(),
+    file_path: Annotated[
+        str,
+        typer.Argument(
+            metavar='TEXT',
+            help='Full path to output file. default: "./$CLICKHOUSE_DB.sql"'
+        ),
+    ] = f'./{Env.get_clickhouse_db()}.sql',
+):
+    if os.path.exists(file_path):
+        logging.error(f'File {file_path} already exists')
+        exit(1)
+
+    clickhouse = init_clickhouse(False)
+    tables = clickhouse.get_tables_by_db(db_name)
+    tables = sorted(
+        tables,
+        key=lambda t: (t.engine.lower() in ('view', 'materializedview'), t.metadata_modification_time)
+    )
+
+    if not tables:
+        logging.warning('"%s" objects not found', db_name)
+        exit(0)
+
+    with codecs.open(file_path, 'w') as file:
+        file.write(';\n'.join([t.create_table_query for t in tables]))
+
+    logging.info('%s created', file_path)
 
 
 if __name__ == '__main__':
