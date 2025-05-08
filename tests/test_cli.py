@@ -2,40 +2,39 @@ import codecs
 import os
 import subprocess
 import unittest
-
-import platform
 from typing import List
 
-from parameterized import parameterized
 from clickhouse_driver import Client
+from ripley import from_clickhouse
+from parameterized import parameterized
 
 
-os.environ['CLICKHOUSE_USER'] = 'thedus_tests'
-os.environ['CLICKHOUSE_PASSWORD'] = 'thedus_tests'
+_CLICKHOUSE_DB = 'thedus_tests'
+_THEDUS_DIR = os.path.join(os.path.dirname(__file__), 'migrations')
 
-
-def init_clickhouse(database: str = 'default') -> Client:
-    return Client(
-        host='localhost',
-        port=9000,
-        user=os.environ['CLICKHOUSE_USER'],
-        password=os.environ['CLICKHOUSE_PASSWORD'],
-        database=database,
-    )
+os.environ['THEDUS_DIR'] = _THEDUS_DIR
+os.environ['CLICKHOUSE_DB'] = _CLICKHOUSE_DB
+os.environ['CLICKHOUSE_PASSWORD'] = _CLICKHOUSE_DB
+os.environ['CLICKHOUSE_USER'] = _CLICKHOUSE_DB
 
 
 class BaseCliTest(unittest.TestCase):
     maxDiff = 10000
-    clickhouse = init_clickhouse()
+    clickhouse = Client(
+        host='localhost',
+        port=9000,
+        user=_CLICKHOUSE_DB,
+        password=_CLICKHOUSE_DB,
+        database=_CLICKHOUSE_DB,
+    )
 
     @property
     def db_name(self):
-        minor, major, _ = platform.python_version().split('.')
-        return 'thedus_' + '_'.join([minor, major])
+        return _CLICKHOUSE_DB
 
     @property
     def thedus_dir(self) -> str:
-        return os.environ['THEDUS_DIR']
+        return _THEDUS_DIR
 
     @property
     def test_tables(self) -> List[str]:
@@ -46,21 +45,17 @@ class BaseCliTest(unittest.TestCase):
         ]
 
     def setUp(self):
-        thedus_dir = os.path.join(os.path.dirname(__file__), 'migrations')
         os.environ['THEDUS_ENV'] = ''
-        os.environ['THEDUS_DIR'] = thedus_dir
-        os.environ['CLICKHOUSE_DB'] = self.db_name
 
-        with os.scandir(thedus_dir) as entries:
+        with os.scandir(self.thedus_dir) as entries:
             for entry in entries:
                 if entry.name == '.gitignore':
                     continue
                 os.remove(entry.path)
 
-        self.clickhouse = init_clickhouse()
-        self.clickhouse.execute(f'DROP DATABASE IF EXISTS {self.db_name}')
-        self.clickhouse.execute(f'CREATE DATABASE IF NOT EXISTS {self.db_name}')
-        self.clickhouse = init_clickhouse(self.db_name)
+        clickhouse = from_clickhouse(self.clickhouse)
+        for table in clickhouse.get_tables_by_db(_CLICKHOUSE_DB):
+            self.clickhouse.execute(f"DROP TABLE {table.full_name}")
 
         for file_name, up, down, skip_env in (
             (
@@ -269,3 +264,83 @@ class Migration(BaseMigration):
         self.check_thedus_output(result, ['rollback 20250101000000_0_create_tbl_metrics', 'done'])
         result = subprocess.getoutput('thedus downgrade')
         self.check_thedus_output(result, ['done'])
+
+
+class TestSaveDbStructure(BaseCliTest):
+    def test_save_db_structure(self):
+        self.clickhouse.execute("""
+            CREATE TABLE votes
+            (
+                `Id` UInt32,
+                `PostId` Int32,
+                `VoteTypeId` UInt8,
+                `CreationDate` DateTime64(3, 'UTC'),
+                `UserId` Int32,
+                `BountyAmount` UInt8
+            )
+            ENGINE = MergeTree
+            ORDER BY (VoteTypeId, CreationDate, PostId)
+        """)
+
+        self.clickhouse.execute("""
+            CREATE TABLE up_down_votes_per_day
+            (
+              `Day` Date,
+              `UpVotes` UInt32,
+              `DownVotes` UInt32
+            )
+            ENGINE = SummingMergeTree
+            ORDER BY Day
+        """)
+
+        self.clickhouse.execute("""
+            CREATE MATERIALIZED VIEW up_down_votes_per_day_mv TO up_down_votes_per_day AS
+            SELECT toStartOfDay(CreationDate)::Date AS Day,
+                   countIf(VoteTypeId = 2) AS UpVotes,
+                   countIf(VoteTypeId = 3) AS DownVotes
+              FROM votes
+             GROUP BY Day
+        """)
+
+        self.clickhouse.execute("""
+            CREATE VIEW upvotes_per_user AS
+            SELECT toDate(CreationDate) AS Day,
+                   UserId,
+                   count() AS user_votes
+              FROM votes
+             GROUP BY Day, UserId
+        """)
+
+        result = subprocess.run(
+            'thedus save-db-structure',
+            shell=True,
+            cwd=self.thedus_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=os.environ,
+        )
+
+        filename = f'{_CLICKHOUSE_DB}.sql'
+        self.assertEqual(result.stdout[32:], f'./{filename} created\n')
+
+        with codecs.open(os.path.join(self.thedus_dir, filename)) as file:
+            self.assertEqual(
+                (
+                    f"CREATE TABLE {_CLICKHOUSE_DB}.up_down_votes_per_day "
+                    "(`Day` Date, `UpVotes` UInt32, `DownVotes` UInt32) "
+                    "ENGINE = SummingMergeTree ORDER BY Day SETTINGS index_granularity = 8192;\n"
+                    f"CREATE TABLE {_CLICKHOUSE_DB}.votes (`Id` UInt32, `PostId` Int32, `VoteTypeId` UInt8, "
+                    "`CreationDate` DateTime64(3, 'UTC'), `UserId` Int32, `BountyAmount` UInt8) ENGINE = MergeTree "
+                    "ORDER BY (VoteTypeId, CreationDate, PostId) SETTINGS index_granularity = 8192;\n"
+                    "CREATE MATERIALIZED VIEW "
+                    f"{_CLICKHOUSE_DB}.up_down_votes_per_day_mv TO {_CLICKHOUSE_DB}.up_down_votes_per_day "
+                    "(`Day` Date, `UpVotes` UInt64, `DownVotes` UInt64) AS "
+                    "SELECT CAST(toStartOfDay(CreationDate), 'Date') AS Day, countIf(VoteTypeId = 2) AS UpVotes, "
+                    f"countIf(VoteTypeId = 3) AS DownVotes FROM {_CLICKHOUSE_DB}.votes GROUP BY Day;\n"
+                    f"CREATE VIEW {_CLICKHOUSE_DB}.upvotes_per_user (`Day` Date, `UserId` Int32, `user_votes` UInt64) "
+                    f"AS SELECT toDate(CreationDate) AS Day, UserId, count() AS user_votes FROM {_CLICKHOUSE_DB}.votes "
+                    "GROUP BY Day, UserId"
+                ),
+                file.read(),
+            )
